@@ -169,6 +169,19 @@ Never commit `.env` or real SMTP/JWT secrets.
 - Charts on the admin dashboard need Chart.js loaded from jsDelivr; an offline admin session will still show tables.
 - First `npm test` may download a MongoDB binary for `mongodb-memory-server`.
 
+## Deploy to Render
+
+This repository includes a Render configuration for a free Node deployment.
+
+1. Push this repo to GitHub.
+2. Sign in to Render and click New + > Blueprint.
+3. Connect the GitHub repository.
+4. Render will create the web service and a MongoDB database automatically.
+5. Update `APP_URL` and `FRONTEND_ORIGIN` in the Render dashboard if your app name changes.
+6. Set a strong `JWT_SECRET` if it was not generated automatically.
+
+The app uses a MongoDB connection string from the managed database created by Render. For a production-ready setup, also configure SMTP and any optional push keys under the service Environment Variables.
+
 ## License
 
 Educational project source. Adapt it to your institution’s policies before production use.

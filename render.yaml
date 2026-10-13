@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: campushub
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: APP_URL
+        value: https://campushub.onrender.com
+      - key: FRONTEND_ORIGIN
+        value: https://campushub.onrender.com
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 8h
+      - key: JWT_RESET_EXPIRES_IN
+        value: 30m
+      - key: BCRYPT_ROUNDS
+        value: "10"
+      - key: UPLOAD_DIR
+        value: uploads
+      - key: MAX_FILE_SIZE_MB
+        value: "10"
+      - key: INSTITUTION_NAME
+        value: CampusHub College
+      - key: MONGODB_URI
+        fromDatabase:
+          name: campushub-db
+          property: connectionString
+
+databases:
+  - name: campushub-db
+    databaseName: campushub
+    user: campushub
