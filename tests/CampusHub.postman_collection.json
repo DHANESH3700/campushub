@@ -1,0 +1,24 @@
+{
+  "info": { "name": "CampusHub API", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+  "item": [
+    { "name": "Health", "request": { "method": "GET", "url": "{{base}}/api/health" } },
+    {
+      "name": "Login",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"admin@campushub.edu\",\n  \"password\": \"Admin@12345\"\n}" },
+        "url": "{{base}}/api/auth/login"
+      }
+    },
+    {
+      "name": "Dashboard",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": "{{base}}/api/dashboard"
+      }
+    }
+  ],
+  "variable": [{ "key": "base", "value": "http://localhost:5000" }, { "key": "token", "value": "" }]
+}

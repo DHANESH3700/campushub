@@ -1,0 +1,14 @@
+{
+  "name": "CampusHub: Smart College Management Platform",
+  "short_name": "CampusHub",
+  "description": "Unified academic, campus, and career platform for college communities.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#0b1f33",
+  "theme_color": "#0f4c81",
+  "icons": [
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

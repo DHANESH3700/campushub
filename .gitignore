@@ -1,0 +1,11 @@
+node_modules/
+.env
+uploads/
+logs/
+*.log
+.DS_Store
+coverage/
+.vscode/
+tmp/
+dist/
+mongodb-memory-*
