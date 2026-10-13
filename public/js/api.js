@@ -49,12 +49,20 @@ const Api = (() => {
   async function download(id, name) {
     const t = token();
     const res = await fetch(`/api/files/${id}`, { headers: { Authorization: `Bearer ${t}` } });
-    if (!res.ok) throw new Error('Download failed');
+    if (!res.ok) {
+      const contentType = res.headers.get('content-type') || '';
+      const data = contentType.includes('application/json') ? await res.json() : null;
+      throw new Error(data?.message || 'Download failed');
+    }
     const blob = await res.blob();
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
+    const url = URL.createObjectURL(blob);
+    a.href = url;
     a.download = name || 'file';
+    document.body.appendChild(a);
     a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   return { token, user, setSession, clear, request, fileUrl, download };

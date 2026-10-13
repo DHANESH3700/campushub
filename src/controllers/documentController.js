@@ -18,7 +18,12 @@ const list = asyncHandler(async (req, res) => {
   if (req.query.status) filter.status = req.query.status;
   if (req.query.category) filter.category = req.query.category;
   const [items, total] = await Promise.all([
-    DocumentRequest.find(filter).populate('requester', 'name email').sort(sort).skip(skip).limit(limit),
+    DocumentRequest.find(filter)
+      .populate('requester', 'name email')
+      .populate('completedDocument', 'originalName')
+      .sort(sort)
+      .skip(skip)
+      .limit(limit),
     DocumentRequest.countDocuments(filter)
   ]);
   res.json({ success: true, ...paginated(items, total, page, limit) });

@@ -8,6 +8,10 @@ const Department = require('../src/models/Department');
 const FileAsset = require('../src/models/FileAsset');
 const { Company, Opportunity } = require('../src/models/Placement');
 const { CampusEvent } = require('../src/models/Event');
+const DocumentRequest = require('../src/models/DocumentRequest');
+const fs = require('node:fs');
+const path = require('node:path');
+const { uploadRoot } = require('../src/middleware/upload');
 
 let app;
 let studentToken;
@@ -84,6 +88,53 @@ describe('workflows', () => {
     assert.equal(denied.status, 403);
     const missing = await request(app).get(`/api/files/${asset._id}`).set('Authorization', `Bearer ${studentToken}`);
     assert.equal(missing.status, 404);
+  });
+
+  it('allows a student to download the document attached to their request', async () => {
+    const staff = await User.create({ name: 'Staff', email: 'staff@test.edu', password: 'Password1!', role: 'staff' });
+    const storedName = `requested-${Date.now()}.txt`;
+    const folder = path.join(uploadRoot, 'documents');
+    const filePath = path.join(folder, storedName);
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(filePath, 'completed student document');
+
+    try {
+      const asset = await FileAsset.create({
+        originalName: 'transcript.txt',
+        storedName,
+        mimeType: 'text/plain',
+        folder: 'documents',
+        owner: staff._id,
+        visibility: 'private'
+      });
+      const docRequest = await DocumentRequest.create({
+        requester: student._id,
+        category: 'transcript',
+        purpose: 'Download test',
+        status: 'ready',
+        completedDocument: asset._id
+      });
+
+      const ownDownload = await request(app)
+        .get(`/api/files/${asset._id}`)
+        .set('Authorization', `Bearer ${studentToken}`);
+      assert.equal(ownDownload.status, 200);
+      assert.equal(ownDownload.text, 'completed student document');
+
+      const other = await User.create({ name: 'Other', email: 'other@test.edu', password: 'Password1!', role: 'student' });
+      const otherToken = (await request(app).post('/api/auth/login').send({ email: other.email, password: 'Password1!' })).body.token;
+      const denied = await request(app)
+        .get(`/api/files/${asset._id}`)
+        .set('Authorization', `Bearer ${otherToken}`);
+      assert.equal(denied.status, 403);
+
+      const listed = await request(app)
+        .get('/api/documents')
+        .set('Authorization', `Bearer ${studentToken}`);
+      assert.equal(listed.body.items.find((item) => item._id === String(docRequest._id)).completedDocument.originalName, 'transcript.txt');
+    } finally {
+      fs.unlinkSync(filePath);
+    }
   });
 
   it('student ID verification does not leak extra private fields', async () => {

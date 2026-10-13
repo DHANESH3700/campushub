@@ -74,7 +74,7 @@ function navItems(role) {
     ['analytics', 'Analytics'],
     ['settings', 'Settings']
   ];
-  const map = { student, faculty, admin, placement_officer: [['placements', 'Placements'], ['analytics', 'Analytics'], ['career', 'Student careers']], staff: [['students', 'Students'], ['library', 'Library'], ['hostel', 'Hostel'], ['transport', 'Transport'], ['documents', 'Documents'], ['issues', 'Issues']] };
+  const map = { student, faculty, admin, placement_officer: [['placements', 'Placements'], ['analytics', 'Analytics'], ['career', 'Student careers']], staff: [['students', 'Students'], ['faculty', 'Faculty'], ['library', 'Library'], ['hostel', 'Hostel'], ['transport', 'Transport'], ['documents', 'Documents'], ['issues', 'Issues']] };
   return [...common, ...(map[role] || [])];
 }
 
@@ -82,10 +82,11 @@ function shell(user, inner) {
   const items = navItems(user.role)
     .map(([id, label]) => `<a href="#${id}" data-route="${id}">${label}</a>`)
     .join('');
+  const roleLabel = user.role === 'staff' ? 'Admin' : user.role.replace('_', ' ');
   return `
     <div class="app">
       <aside class="sidebar" id="sidebar">
-        <div class="brand-row"><div class="logo">CH</div><div><h1>CampusHub</h1><div class="muted">${user.role.replace('_', ' ')}</div></div></div>
+        <div class="brand-row"><div class="logo">CH</div><div><h1>CampusHub</h1><div class="muted">${roleLabel}</div></div></div>
         <nav class="nav">${items}</nav>
       </aside>
       <div>
@@ -128,7 +129,6 @@ const Pages = {
           <button class="btn primary" type="submit">Login</button>
         </form>
         <p><a href="#forgot">Forgot password</a> · <a href="#register">Register</a></p>
-        <p class="muted">Demo: admin@campushub.edu / Admin@12345</p>
       </main>`;
   },
   register() {
@@ -249,7 +249,7 @@ const routes = {
         <label class="field">Category <select name="category"><option>bonafide</option><option>transcript</option><option>transfer</option><option>character</option><option>fee_receipt</option></select></label>
         <label class="field">Purpose <input name="purpose" required /></label>
         <button class="btn primary">Request</button></form></div>`:''}
-      ${table(['Requester','Category','Status','File'], (data.items||[]).map(i=>`<tr><td>${i.requester?.name||''}</td><td>${i.category}</td><td>${badge(i.status)}</td><td>${i.completedDocument?`<button class="btn" data-file="${i.completedDocument}">Download</button>`: (['admin','staff'].includes(user.role)?`<form data-doc="${i._id}" class="upload-doc"><input type="file" name="file" /><button class="btn">Upload</button></form>`:'')}</td></tr>`).join(''))}`;
+      ${table(['Requester','Category','Status','File'], (data.items||[]).map(i=>`<tr><td>${i.requester?.name||''}</td><td>${i.category}</td><td>${badge(i.status)}</td><td>${i.completedDocument?`<button class="btn" data-file="${i.completedDocument._id || i.completedDocument}" data-filename="${encodeURIComponent(i.completedDocument.originalName || 'document')}">Download</button>`: (['admin','staff'].includes(user.role)?`<form data-doc="${i._id}" class="upload-doc"><input type="file" name="file" /><button class="btn">Upload</button></form>`:'')}</td></tr>`).join(''))}`;
   },
   async resources() {
     const data = await Api.request('/resources');
@@ -452,6 +452,11 @@ const routes = {
     const students = (data.items || []).filter((u) => u.role === 'student');
     return `<h2>Students</h2>${table(['Name','Email','Student ID','Department','Semester','CGPA','Status'], students.map((u) => `<tr><td>${u.name}</td><td>${u.email}</td><td>${u.studentId || '-'}</td><td>${u.department?.name || u.department || '-'}</td><td>${u.semester || '-'}</td><td>${u.cgpa ?? '-'}</td><td>${u.isActive === false ? 'Inactive' : 'Active'}</td></tr>`).join('')) || '<div class="empty">No students found.</div>'}`;
   },
+  async faculty() {
+    const data = await Api.request('/users?role=faculty');
+    const faculty = data.items || [];
+    return `<h2>Faculty</h2>${table(['Name','Email','Employee ID','Department','Status'], faculty.map((u) => `<tr><td>${u.name}</td><td>${u.email}</td><td>${u.employeeId || '-'}</td><td>${u.department?.name || u.department || '-'}</td><td>${u.isActive === false ? 'Inactive' : 'Available'}</td></tr>`).join(''))}`;
+  },
   async users() {
     const data = await Api.request('/users');
     return `<h2>Users</h2>${table(['ID','Name','Email','Role','Active'], (data.items||[]).map(u=>`<tr><td><code>${u._id}</code></td><td>${u.name}</td><td>${u.email}</td><td>${u.role}</td><td>${u.isActive}</td></tr>`).join(''))}`;
@@ -593,7 +598,7 @@ async function bindPage(name) {
   document.getElementById('readAll')?.addEventListener('click', async () => { await Api.request('/notifications/read-all', { method: 'POST', body: {} }); route(); });
   document.querySelectorAll('[data-approve]').forEach((b) => b.onclick = async () => { await Api.request(`/leave/${b.dataset.approve}/review`, { method: 'POST', body: { status: 'approved' } }); route(); });
   document.querySelectorAll('[data-reject]').forEach((b) => b.onclick = async () => { await Api.request(`/leave/${b.dataset.reject}/review`, { method: 'POST', body: { status: 'rejected', comment: 'Rejected' } }); route(); });
-  document.querySelectorAll('[data-file]').forEach((b) => b.onclick = () => Api.download(b.dataset.file).catch((e) => toast(e.message)));
+  document.querySelectorAll('[data-file]').forEach((b) => b.onclick = () => Api.download(b.dataset.file, decodeURIComponent(b.dataset.filename || '')).catch((e) => toast(e.message)));
   document.querySelectorAll('[data-reg-event]').forEach((b) => b.onclick = async () => { try { await Api.request(`/events/${b.dataset.regEvent}/register`, { method: 'POST', body: {} }); toast('Registered'); route(); } catch (e) { toast(e.message); } });
   document.querySelectorAll('[data-cancel-event]').forEach((b) => b.onclick = async () => { await Api.request(`/events/${b.dataset.cancelEvent}/cancel`, { method: 'POST', body: {} }); route(); });
   document.querySelectorAll('[data-apply]').forEach((b) => b.onclick = async () => { try { await Api.request(`/opportunities/${b.dataset.apply}/apply`, { method: 'POST', body: {} }); toast('Applied'); } catch (e) { toast(e.message); } });

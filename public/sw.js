@@ -1,4 +1,4 @@
-const CACHE = 'campushub-static-v1';
+const CACHE = 'campushub-static-v2';
 const PRECACHE = ['/', '/index.html', '/offline.html', '/css/styles.css', '/js/api.js', '/js/app.js', '/manifest.json', '/icons/icon.svg'];
 
 self.addEventListener('install', (event) => {
