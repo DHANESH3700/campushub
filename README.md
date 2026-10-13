@@ -182,6 +182,18 @@ This repository includes a Render configuration for a free Node deployment.
 
 The app uses a MongoDB connection string from the managed database created by Render. For a production-ready setup, also configure SMTP and any optional push keys under the service Environment Variables.
 
+## Deploy to Vercel
+
+This app can also be deployed to Vercel with a serverless wrapper.
+
+1. Import this repository into Vercel.
+2. Set the framework preset to "Other".
+3. Add the required environment variables from `.env.example`.
+4. Set `MONGODB_URI` to a MongoDB Atlas or hosted MongoDB connection string.
+5. Deploy the project.
+
+Note: Vercel is a good fit for the frontend and API, but background jobs such as reminder scheduling may not run reliably in a serverless environment. For production, a persistent Node host such as Render, Railway, or a VM is more robust.
+
 ## License
 
 Educational project source. Adapt it to your institution’s policies before production use.
