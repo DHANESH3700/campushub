@@ -188,11 +188,11 @@ This app can also be deployed to Vercel with a serverless wrapper.
 
 1. Import this repository into Vercel.
 2. Set the framework preset to "Other".
-3. Add the required environment variables from `.env.example`.
-4. Set `MONGODB_URI` to a MongoDB Atlas or hosted MongoDB connection string.
-5. Deploy the project.
+3. Add `MONGODB_URI` (MongoDB Atlas or another hosted MongoDB), `JWT_SECRET`, and `STORAGE_PROVIDER=s3` in the Vercel project settings. Configure `S3_BUCKET` and `S3_REGION`, plus S3 credentials when not using the AWS credential chain.
+4. Add any optional email and VAPID variables from `.env.example` if those features are needed.
+5. Deploy the project. Later pushes to the connected GitHub branch trigger Vercel deployments.
 
-Note: Vercel is a good fit for the frontend and API, but background jobs such as reminder scheduling may not run reliably in a serverless environment. For production, a persistent Node host such as Render, Railway, or a VM is more robust.
+The Vercel function connects to MongoDB on demand and bundles the `public/` frontend assets. Uploads use `/tmp` as temporary workspace; configure S3-compatible object storage for durable files because Vercel's function filesystem is ephemeral. Background jobs such as reminder scheduling may not run reliably in a serverless environment. For production workloads that depend on scheduled reminders, use a persistent Node host such as Render, Railway, or a VM.
 
 ## License
 

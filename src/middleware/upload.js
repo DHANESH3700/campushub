@@ -1,11 +1,15 @@
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const crypto = require('crypto');
 const multer = require('multer');
 const AppError = require('../utils/AppError');
 const { ALLOWED_MIME } = require('../config/constants');
 
-const uploadRoot = path.resolve(process.env.UPLOAD_DIR || 'uploads');
+const uploadRoot = path.resolve(
+  process.env.UPLOAD_DIR ||
+    (process.env.VERCEL ? path.join(os.tmpdir(), 'campushub-uploads') : 'uploads')
+);
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });

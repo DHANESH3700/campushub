@@ -4,10 +4,14 @@ const logger = require('../utils/logger');
 
 let memoryServer;
 
+function requiresConfiguredDatabase() {
+  return process.env.NODE_ENV === 'production' || Boolean(process.env.VERCEL);
+}
+
 async function connectDb(uri = process.env.MONGODB_URI) {
   if (!uri) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('MONGODB_URI is required in production');
+    if (requiresConfiguredDatabase()) {
+      throw new Error('MONGODB_URI is required in production and on Vercel');
     }
 
     memoryServer = await MongoMemoryServer.create();
@@ -23,7 +27,7 @@ async function connectDb(uri = process.env.MONGODB_URI) {
       await mongoose.connect(uri);
     }
   } catch (error) {
-    if (process.env.NODE_ENV === 'production') {
+    if (requiresConfiguredDatabase()) {
       throw error;
     }
 
