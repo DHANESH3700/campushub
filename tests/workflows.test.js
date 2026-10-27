@@ -6,6 +6,8 @@ const jwt = require('jsonwebtoken');
 const User = require('../src/models/User');
 const Department = require('../src/models/Department');
 const FileAsset = require('../src/models/FileAsset');
+const { Subject } = require('../src/models/Academic');
+const { TimetableSlot } = require('../src/models/Timetable');
 const { Company, Opportunity } = require('../src/models/Placement');
 const { CampusEvent } = require('../src/models/Event');
 const DocumentRequest = require('../src/models/DocumentRequest');
@@ -69,6 +71,153 @@ describe('workflows', () => {
     assert.equal(a.status, 201);
     const dup = await request(app).post(`/api/events/${ev._id}/register`).set('Authorization', `Bearer ${studentToken}`).send({});
     assert.equal(dup.status, 409);
+  });
+
+  it('creates and updates timetable slots using the subject department', async () => {
+    const department = await Department.findOne({ code: 'CSE' });
+    const faculty = await User.create({
+      name: 'Timetable Faculty',
+      email: 'timetable-faculty@test.edu',
+      password: 'Password1!',
+      role: 'faculty',
+      department: department._id
+    });
+    const subject = await Subject.create({ name: 'Timetable Testing', code: 'TT101', department: department._id });
+    const otherDepartment = await Department.create({ name: 'Other Department', code: 'OTH' });
+    const otherSubject = await Subject.create({ name: 'Other Department Subject', code: 'OTH101', department: otherDepartment._id });
+    const facultyToken = (await request(app)
+      .post('/api/auth/login')
+      .send({ email: faculty.email, password: 'Password1!' })).body.token;
+
+    const scopedSubjects = await request(app)
+      .get(`/api/subjects?department=${otherDepartment._id}`)
+      .set('Authorization', `Bearer ${facultyToken}`);
+    assert.equal(scopedSubjects.status, 200);
+    assert.deepEqual(scopedSubjects.body.items.map((item) => item.code), ['TT101']);
+
+    const missingSubject = await request(app)
+      .post('/api/timetable')
+      .auth(adminToken, { type: 'bearer' })
+      .send({ faculty: faculty._id, dayOfWeek: '1', startTime: '09:00', endTime: '10:00' });
+    assert.equal(missingSubject.status, 400);
+    assert.match(missingSubject.body.message, /select a subject/i);
+
+    const wrongDepartment = await request(app)
+      .post('/api/timetable')
+      .set('Authorization', `Bearer ${facultyToken}`)
+      .send({ subject: otherSubject._id, dayOfWeek: '1', startTime: '09:00', endTime: '10:00' });
+    assert.equal(wrongDepartment.status, 403);
+    assert.match(wrongDepartment.body.message, /subject must belong to your department/i);
+
+    const wrongAssignmentDepartment = await request(app)
+      .post('/api/assignments')
+      .set('Authorization', `Bearer ${facultyToken}`)
+      .send({ title: 'Other department assignment', subject: otherSubject._id, deadline: new Date(Date.now() + 86400000).toISOString() });
+    assert.equal(wrongAssignmentDepartment.status, 403);
+    assert.match(wrongAssignmentDepartment.body.message, /subject must belong to your department/i);
+
+    const created = await request(app)
+      .post('/api/timetable')
+      .auth(adminToken, { type: 'bearer' })
+      .send({ subject: subject.code, faculty: faculty._id, dayOfWeek: '1', startTime: '09:00', endTime: '10:00', semester: '2', section: 'A' });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.item.department, String(department._id));
+
+    const updated = await request(app)
+      .patch(`/api/timetable/${created.body.item._id}`)
+      .auth(adminToken, { type: 'bearer' })
+      .send({ subject: subject._id, faculty: faculty._id, dayOfWeek: '1', startTime: '10:00', endTime: '11:00', classroom: 'Room 2', semester: '2', section: 'A' });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.body.item.startTime, '10:00');
+    assert.equal(updated.body.item.classroom, 'Room 2');
+    const saved = await TimetableSlot.findById(created.body.item._id);
+    assert.equal(String(saved.department), String(department._id));
+  });
+
+  it('supports department-scoped subject codes and rejects ambiguous code lookups', async () => {
+    const cse = await Department.findOne({ code: 'CSE' });
+    const ece = await Department.create({ name: 'Electronics and Communication Engineering', code: 'ECE' });
+    const faculty = await User.create({
+      name: 'ECE Timetable Faculty',
+      email: 'ece-timetable-faculty@test.edu',
+      password: 'Password1!',
+      role: 'faculty',
+      department: ece._id
+    });
+
+    await Subject.create({ name: 'Shared Course', code: 'SHARED101', regulation: 'PVP23', department: cse._id });
+    await Subject.create({ name: 'Shared Course', code: 'SHARED101', regulation: 'PVP23', department: ece._id });
+    await Subject.create({ name: 'Legacy Course', code: 'REG101', regulation: 'PVP21', department: cse._id });
+    await Subject.create({ name: 'Current Course', code: 'REG101', regulation: 'PVP23', department: cse._id });
+    await assert.rejects(
+      Subject.create({ name: 'Duplicate Course', code: 'REG101', regulation: 'PVP23', department: cse._id }),
+      (error) => error.code === 11000
+    );
+
+    const ambiguous = await request(app)
+      .post('/api/timetable')
+      .auth(adminToken, { type: 'bearer' })
+      .send({ subject: 'SHARED101', faculty: faculty._id, dayOfWeek: '2', startTime: '09:00', endTime: '10:00' });
+    assert.equal(ambiguous.status, 400);
+    assert.match(ambiguous.body.message, /ambiguous/i);
+
+    const scoped = await request(app)
+      .post('/api/timetable')
+      .auth(adminToken, { type: 'bearer' })
+      .send({
+        subject: 'SHARED101',
+        department: ece._id,
+        faculty: faculty._id,
+        dayOfWeek: '2',
+        startTime: '09:00',
+        endTime: '10:00'
+      });
+    assert.equal(scoped.status, 201, scoped.body.message);
+    assert.equal(String(scoped.body.item.department), String(ece._id));
+  });
+
+  it('uploads assignment materials and student submissions', async () => {
+    const department = await Department.findOne({ code: 'CSE' });
+    const subject = await Subject.create({ name: 'Assignment Testing', code: 'ASG101', department: department._id });
+    const assignmentResponse = await request(app)
+      .post('/api/assignments')
+      .auth(adminToken, { type: 'bearer' })
+      .field('title', 'Upload test assignment')
+      .field('subject', subject.code)
+      .field('deadline', new Date(Date.now() + 86400000).toISOString())
+      .attach('file', Buffer.from('assignment material'), {
+        filename: 'assignment.pptx',
+        contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation'
+      });
+    assert.equal(assignmentResponse.status, 201, assignmentResponse.body.message);
+    const attachment = await FileAsset.findById(assignmentResponse.body.item.attachment);
+    assert.equal(String(attachment.department), String(department._id));
+    const attachmentPath = path.join(uploadRoot, attachment.folder, attachment.storedName);
+
+    try {
+      const listed = await request(app)
+        .get('/api/assignments')
+        .auth(studentToken, { type: 'bearer' });
+      const studentAssignment = listed.body.items.find((item) => item._id === assignmentResponse.body.item._id);
+      assert.equal(studentAssignment.attachment.originalName, 'assignment.pptx');
+
+      const download = await request(app)
+        .get(`/api/files/${attachment._id}`)
+        .auth(studentToken, { type: 'bearer' });
+      assert.equal(download.status, 200);
+      assert.equal(fs.readFileSync(attachmentPath, 'utf8'), 'assignment material');
+
+      const submission = await request(app)
+        .post(`/api/assignments/${assignmentResponse.body.item._id}/submit`)
+        .auth(studentToken, { type: 'bearer' })
+        .attach('file', Buffer.from('student work'), { filename: 'submission.pdf', contentType: 'application/pdf' });
+      assert.equal(submission.status, 201, submission.body.message);
+      const submittedFile = await FileAsset.findById(submission.body.item.file);
+      assert.ok(submittedFile);
+      fs.unlinkSync(path.join(uploadRoot, submittedFile.folder, submittedFile.storedName));
+    } finally {
+      if (fs.existsSync(attachmentPath)) fs.unlinkSync(attachmentPath);
+    }
   });
 
   it('file download requires auth and ownership', async () => {

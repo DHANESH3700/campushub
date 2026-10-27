@@ -3,6 +3,8 @@ const Attendance = require('../models/Attendance');
 const Mark = require('../models/Marks');
 const { TimetableSlot, CalendarEvent } = require('../models/Timetable');
 const { Assignment, Submission } = require('../models/Assignment');
+const User = require('../models/User');
+const { Subject } = require('../models/Academic');
 const Settings = require('../models/Settings');
 const AppError = require('../utils/AppError');
 const asyncHandler = require('../utils/asyncHandler');
@@ -11,9 +13,98 @@ const { departmentFilter } = require('../services/accessService');
 const { saveUpload } = require('../services/fileService');
 const { notify } = require('../services/notificationService');
 const { toCsv } = require('../utils/csv');
+const { createReportPdf } = require('../services/pdfService');
+const mongoose = require('mongoose');
 
 function overlaps(aStart, aEnd, bStart, bEnd) {
   return aStart < bEnd && bStart < aEnd;
+}
+
+function timeInMinutes(value) {
+  if (typeof value !== 'string' || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)) return null;
+  const [hours, minutes] = value.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+async function findSubject(value, departmentId, regulation) {
+  const subjectValue = typeof value === 'string' ? value.trim() : '';
+  if (!subjectValue) throw new AppError('Select a subject before saving', 400);
+
+  let subject;
+  if (mongoose.isValidObjectId(subjectValue)) {
+    subject = await Subject.findById(subjectValue);
+  } else {
+    const filter = { code: subjectValue.toUpperCase() };
+    if (departmentId) filter.department = departmentId;
+    if (regulation) filter.regulation = regulation.toUpperCase();
+    const matches = await Subject.find(filter).limit(2);
+    if (matches.length > 1) {
+      throw new AppError('Subject code is ambiguous. Select a subject from the list or include its department and regulation.', 400);
+    }
+    subject = matches[0];
+  }
+  if (!subject) {
+    throw new AppError('Subject not found. Choose an existing subject or enter its subject code.', 400);
+  }
+  return subject;
+}
+
+async function timetableValues(req) {
+  const { subject: subjectId, startTime, endTime, classroom, section } = req.body;
+  const dayOfWeek = Number(req.body.dayOfWeek);
+  const start = timeInMinutes(startTime);
+  const end = timeInMinutes(endTime);
+  if (!Number.isInteger(dayOfWeek) || dayOfWeek < 0 || dayOfWeek > 6) {
+    throw new AppError('Day of week must be between 0 and 6', 400);
+  }
+  if (start === null || end === null || start >= end) {
+    throw new AppError('Enter a valid start time before the end time (HH:MM)', 400);
+  }
+
+  const departmentId = req.user.role === 'faculty' ? req.user.department : req.body.department;
+  const subject = await findSubject(subjectId, departmentId, req.body.regulation);
+  if (req.user.role === 'faculty' && String(subject.department) !== String(req.user.department)) {
+    throw new AppError('Subject must belong to your department', 403);
+  }
+
+  const facultyId = req.user.role === 'faculty' ? req.user._id : req.body.faculty;
+  if (!mongoose.isValidObjectId(facultyId)) throw new AppError('A valid faculty member is required', 400);
+  const faculty = await User.findOne({ _id: facultyId, role: 'faculty' });
+  if (!faculty) throw new AppError('Faculty member not found', 404);
+  if (faculty.department && String(faculty.department) !== String(subject.department)) {
+    throw new AppError('Faculty member and subject must belong to the same department', 400);
+  }
+  const semester = req.body.semester === '' || req.body.semester === undefined
+    ? subject.semester
+    : Number(req.body.semester);
+  if (semester !== undefined && (!Number.isFinite(semester) || semester < 1)) {
+    throw new AppError('Semester must be a positive number', 400);
+  }
+
+  return {
+    department: subject.department,
+    semester,
+    section: section || undefined,
+    subject: subject._id,
+    faculty: faculty._id,
+    classroom: classroom || undefined,
+    dayOfWeek,
+    startTime,
+    endTime
+  };
+}
+
+async function checkTimetableConflicts(values, excludeId) {
+  const filter = { dayOfWeek: values.dayOfWeek };
+  if (excludeId) filter._id = { $ne: excludeId };
+  const existing = await TimetableSlot.find(filter);
+  for (const slot of existing) {
+    if (!overlaps(values.startTime, values.endTime, slot.startTime, slot.endTime)) continue;
+    if (String(slot.faculty) === String(values.faculty)) throw new AppError('Faculty has a conflicting class', 409);
+    if (slot.classroom && values.classroom && slot.classroom === values.classroom) {
+      throw new AppError('Classroom conflict', 409);
+    }
+  }
 }
 
 const resources = {
@@ -83,14 +174,19 @@ const attendance = {
   }),
   report: asyncHandler(async (req, res) => {
     const items = await Attendance.find(departmentFilter(req.user)).populate('student subject', 'name code');
-    const csv = toCsv(items, [
+    const columns = [
       { label: 'Student', value: (r) => r.student?.name },
       { label: 'Subject', value: (r) => r.subject?.code },
       { label: 'Date', value: (r) => r.date?.toISOString().slice(0, 10) },
       { label: 'Status', value: 'status' }
-    ]);
-    res.setHeader('Content-Type', 'text/csv');
-    res.send(csv);
+    ];
+    if (req.query.format === 'pdf') {
+      return createReportPdf(res, 'Attendance report', items, columns);
+    }
+    if (req.query.format && req.query.format !== 'csv') {
+      throw new AppError('Unsupported report format', 400);
+    }
+    res.type('text/csv').send(toCsv(items, columns));
   })
 };
 
@@ -109,15 +205,24 @@ const timetable = {
     res.json({ success: true, items, calendar });
   }),
   create: asyncHandler(async (req, res) => {
-    const { faculty, classroom, dayOfWeek, startTime, endTime } = req.body;
-    const existing = await TimetableSlot.find({ dayOfWeek });
-    for (const e of existing) {
-      if (!overlaps(startTime, endTime, e.startTime, e.endTime)) continue;
-      if (String(e.faculty) === String(faculty)) throw new AppError('Faculty has a conflicting class', 409);
-      if (e.classroom && classroom && e.classroom === classroom) throw new AppError('Classroom conflict', 409);
-    }
-    const item = await TimetableSlot.create({ ...req.body, department: req.body.department || req.user.department });
+    const values = await timetableValues(req);
+    await checkTimetableConflicts(values);
+    const item = await TimetableSlot.create(values);
     res.status(201).json({ success: true, item });
+  }),
+  update: asyncHandler(async (req, res) => {
+    if (!mongoose.isValidObjectId(req.params.id)) throw new AppError('Timetable slot not found', 404);
+    const item = await TimetableSlot.findById(req.params.id);
+    if (!item) throw new AppError('Timetable slot not found', 404);
+    if (req.user.role === 'faculty' && String(item.faculty) !== String(req.user._id)) {
+      throw new AppError('You can only update your own timetable slots', 403);
+    }
+
+    const values = await timetableValues(req);
+    await checkTimetableConflicts(values, item._id);
+    Object.assign(item, values);
+    await item.save();
+    res.json({ success: true, item });
   }),
   calendarCreate: asyncHandler(async (req, res) => {
     const item = await CalendarEvent.create(req.body);
@@ -156,7 +261,7 @@ const assignments = {
   list: asyncHandler(async (req, res) => {
     const filter = { ...departmentFilter(req.user) };
     if (req.user.role === 'faculty') filter.faculty = req.user._id;
-    const items = await Assignment.find(filter).populate('subject faculty').sort('-deadline');
+    const items = await Assignment.find(filter).populate('subject faculty attachment').sort('-deadline');
     let submissions = [];
     if (req.user.role === 'student') {
       submissions = await Submission.find({ student: req.user._id });
@@ -166,12 +271,22 @@ const assignments = {
     res.json({ success: true, items, submissions });
   }),
   create: asyncHandler(async (req, res) => {
+    const departmentId = req.user.role === 'faculty' ? req.user.department : req.body.department;
+    const subject = await findSubject(req.body.subject, departmentId, req.body.regulation);
+    if (req.user.role === 'faculty' && String(subject.department) !== String(req.user.department)) {
+      throw new AppError('Subject must belong to your department', 403);
+    }
+
     let attachment;
-    if (req.file) attachment = (await saveUpload(req, req.file, 'department'))._id;
+    if (req.file) {
+      req.uploadDepartment = subject.department;
+      attachment = (await saveUpload(req, req.file, 'department'))._id;
+    }
     const item = await Assignment.create({
       ...req.body,
+      subject: subject._id,
       faculty: req.user._id,
-      department: req.user.department,
+      department: subject.department,
       attachment
     });
     res.status(201).json({ success: true, item });

@@ -15,6 +15,7 @@ const dashboard = require('../controllers/dashboardController');
 const analytics = require('../controllers/analyticsController');
 const files = require('../controllers/fileController');
 const assistant = require('../controllers/assistantController');
+const push = require('../controllers/pushController');
 
 const router = express.Router();
 
@@ -38,27 +39,42 @@ router.get('/dashboard', dashboard.overview);
 router.get('/notifications', campus.notifications.list);
 router.post('/notifications/read-all', campus.notifications.readAll);
 router.post('/notifications/:id/read', campus.notifications.read);
+router.get('/notifications/push-config', push.config);
+router.post('/notifications/push-subscription', push.subscribe);
+router.delete('/notifications/push-subscription', push.unsubscribe);
 
 router.get('/users', authorize('admin', 'faculty', 'placement_officer', 'staff'), users.listUsers);
 router.get('/users/:id', users.getUser);
 router.patch('/users/:id', authorize('admin'), users.updateUser);
+router.delete('/users/:id', authorize('admin'), users.deleteUser);
 
 router.get('/departments', admin.departments.list);
 router.post('/departments', authorize('admin'), admin.departments.create);
 router.patch('/departments/:id', authorize('admin'), admin.departments.update);
+router.delete('/departments/:id', authorize('admin'), admin.departments.remove);
 
 router.get('/academic-years', admin.years.list);
 router.post('/academic-years', authorize('admin'), admin.years.create);
+router.patch('/academic-years/:id', authorize('admin'), admin.years.update);
+router.delete('/academic-years/:id', authorize('admin'), admin.years.remove);
 router.get('/subjects', admin.subjects.list);
 router.post('/subjects', authorize('admin', 'faculty'), admin.subjects.create);
+router.patch('/subjects/:id', authorize('admin'), admin.subjects.update);
+router.delete('/subjects/:id', authorize('admin'), admin.subjects.remove);
 router.get('/sections', admin.sections.list);
 router.post('/sections', authorize('admin'), admin.sections.create);
+router.patch('/sections/:id', authorize('admin'), admin.sections.update);
+router.delete('/sections/:id', authorize('admin'), admin.sections.remove);
 router.get('/assessment-types', admin.assessments.list);
 router.post('/assessment-types', authorize('admin'), admin.assessments.create);
+router.patch('/assessment-types/:id', authorize('admin'), admin.assessments.update);
+router.delete('/assessment-types/:id', authorize('admin'), admin.assessments.remove);
 router.get('/settings', admin.getSettings);
 router.patch('/settings', authorize('admin'), admin.updateSettings);
 router.get('/notification-templates', authorize('admin'), admin.templates.list);
 router.post('/notification-templates', authorize('admin'), admin.templates.create);
+router.patch('/notification-templates/:id', authorize('admin'), admin.templates.update);
+router.delete('/notification-templates/:id', authorize('admin'), admin.templates.remove);
 
 router.get('/leave', leave.list);
 router.post('/leave', setFolder('leave'), upload.single('file'), leave.create);
@@ -84,6 +100,7 @@ router.get('/attendance/threshold', ops.threshold);
 
 router.get('/timetable', ops.timetable.list);
 router.post('/timetable', authorize('admin', 'faculty'), ops.timetable.create);
+router.patch('/timetable/:id', authorize('admin', 'faculty'), ops.timetable.update);
 router.post('/calendar', authorize('admin', 'faculty'), ops.timetable.calendarCreate);
 
 router.get('/marks', ops.marks.list);

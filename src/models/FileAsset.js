@@ -7,6 +7,8 @@ const fileAssetSchema = new mongoose.Schema(
     mimeType: String,
     size: Number,
     folder: String,
+    storageProvider: { type: String, enum: ['local', 's3'], default: 'local' },
+    storageBucket: String,
     owner: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     visibility: { type: String, enum: ['private', 'role', 'department', 'public'], default: 'private' },
     allowedRoles: [String],

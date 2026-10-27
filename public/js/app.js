@@ -11,6 +11,15 @@ function h(html) {
   return html;
 }
 
+function escapeHtml(value = '') {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function navItems(role) {
   const common = [
     ['dashboard', 'Dashboard'],
@@ -116,6 +125,38 @@ function formToJson(form) {
   const data = {};
   new FormData(form).forEach((v, k) => { data[k] = v; });
   return data;
+}
+
+function subjectsWithDepartmentCodes(subjects, departments) {
+  const departmentCodes = new Map((departments || []).map((department) => [String(department._id), department.code]));
+  return subjects.map((subject) => {
+    const departmentId = subject.department && typeof subject.department === 'object'
+      ? subject.department._id || subject.department.id
+      : subject.department;
+    return {
+      ...subject,
+      departmentCode: subject.department?.code || departmentCodes.get(String(departmentId)) || ''
+    };
+  });
+}
+
+function subjectOptions(subjects) {
+  if (!subjects.length) return '<option value="">No subjects configured</option>';
+  return `<option value="">Select a subject</option>${subjects.map((subject) => {
+    const details = [
+      subject.departmentCode,
+      subject.regulation,
+      subject.semester ? `Semester ${subject.semester}` : ''
+    ].filter(Boolean).map(escapeHtml);
+    return `<option value="${escapeHtml(subject._id)}">${escapeHtml(subject.code)} — ${escapeHtml(subject.name)}${details.length ? ` (${details.join(' · ')})` : ''}</option>`;
+  }).join('')}`;
+}
+
+function subjectSetupNotice(role) {
+  if (role === 'admin') {
+    return '<p class="muted">Add a department and subject in <a href="#admin">Academic setup</a> before creating timetable slots or assignments.</p>';
+  }
+  return '<p class="muted">No subjects are available for your assigned department. Ask an administrator to verify your department assignment and curriculum.</p>';
 }
 
 const Pages = {
@@ -280,18 +321,35 @@ const routes = {
     const data = await Api.request('/timetable');
     const days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     const user = Api.user();
+    let subjects = [];
+    let faculty = [];
+    if (['admin', 'faculty'].includes(user.role)) {
+      const departmentId = user.department?._id || user.department;
+      const subjectQuery = user.role === 'faculty' && departmentId
+        ? `?department=${encodeURIComponent(departmentId)}`
+        : '';
+      const [subjectData, facultyData, departmentData] = await Promise.all([
+        Api.request(`/subjects${subjectQuery}`),
+        user.role === 'admin' ? Api.request('/users?role=faculty&limit=100') : Promise.resolve({ items: [] }),
+        Api.request('/departments')
+      ]);
+      subjects = subjectsWithDepartmentCodes(subjectData.items || [], departmentData.items || []);
+      faculty = facultyData.items || [];
+    }
+    const canCreate = subjects.length > 0 && (user.role !== 'admin' || faculty.length > 0);
     return `<h2>Timetable & calendar</h2>
       ${['admin','faculty'].includes(user.role)?`<div class="card"><form id="ttForm" class="form-grid">
-        <label class="field">Subject ID <input name="subject" required /></label>
-        <label class="field">Faculty ID <input name="faculty" required /></label>
+        <input type="hidden" name="slotId" />
+        <label class="field">Subject <select name="subject" required ${subjects.length ? '' : 'disabled'}>${subjectOptions(subjects)}</select></label>
+        ${user.role==='admin'?`<label class="field">Faculty <select name="faculty" required ${faculty.length ? '' : 'disabled'}><option value="">Select a faculty member</option>${faculty.map((member) => `<option value="${escapeHtml(member._id)}">${escapeHtml(member.name)}${member.department?.code ? ` — ${escapeHtml(member.department.code)}` : ''}</option>`).join('')}</select></label>`:''}
         <label class="field">Classroom <input name="classroom" /></label>
         <label class="field">Day <select name="dayOfWeek">${days.map((d,i)=>`<option value="${i}">${d}</option>`).join('')}</select></label>
-        <label class="field">Start <input name="startTime" placeholder="09:00" required /></label>
-        <label class="field">End <input name="endTime" placeholder="10:00" required /></label>
+        <label class="field">Start <input name="startTime" type="time" required /></label>
+        <label class="field">End <input name="endTime" type="time" required /></label>
         <label class="field">Semester <input name="semester" type="number" /></label>
         <label class="field">Section <input name="section" /></label>
-        <button class="btn primary">Add slot</button></form></div>`:''}
-      ${table(['Day','Time','Subject','Room'], (data.items||[]).map(t=>`<tr><td>${days[t.dayOfWeek]}</td><td>${t.startTime}-${t.endTime}</td><td>${t.subject?.name||''}</td><td>${t.classroom||''}</td></tr>`).join(''))}
+        <button id="ttSubmit" class="btn primary" ${canCreate ? '' : 'disabled'}>Add slot</button><button id="ttCancel" class="btn" type="button" hidden>Cancel edit</button></form>${subjects.length ? '' : subjectSetupNotice(user.role)}${user.role === 'admin' && subjects.length && !faculty.length ? '<p class="muted">Add an active faculty account before creating timetable slots.</p>' : ''}</div>`:''}
+      ${table(['Day','Time','Subject','Room','Actions'], (data.items||[]).map(t=>`<tr><td>${days[t.dayOfWeek]}</td><td>${t.startTime}-${t.endTime}</td><td>${t.subject?.name||''}</td><td>${t.classroom||''}</td><td>${['admin','faculty'].includes(user.role)?`<button class="btn" data-tt-edit="${escapeHtml(t._id)}" data-subject="${escapeHtml(t.subject?._id||t.subject||'')}" data-faculty="${escapeHtml(t.faculty?._id||t.faculty||'')}" data-classroom="${escapeHtml(t.classroom||'')}" data-day="${escapeHtml(t.dayOfWeek)}" data-start="${escapeHtml(t.startTime)}" data-end="${escapeHtml(t.endTime)}" data-semester="${escapeHtml(t.semester||'')}" data-section="${escapeHtml(t.section||'')}">Edit</button>`:''}</td></tr>`).join(''))}
       <div class="card"><h3>Academic calendar</h3>${(data.calendar||[]).map(c=>`<div>${c.title} · ${new Date(c.start).toLocaleDateString()} (${c.type})</div>`).join('') || '<div class="empty">No calendar entries</div>'}</div>`;
   },
   async marks() {
@@ -311,15 +369,27 @@ const routes = {
   async assignments() {
     const data = await Api.request('/assignments');
     const user = Api.user();
+    let subjects = [];
+    if (['admin', 'faculty'].includes(user.role)) {
+      const departmentId = user.department?._id || user.department;
+      const subjectQuery = user.role === 'faculty' && departmentId
+        ? `?department=${encodeURIComponent(departmentId)}`
+        : '';
+      const [subjectData, departmentData] = await Promise.all([
+        Api.request(`/subjects${subjectQuery}`),
+        Api.request('/departments')
+      ]);
+      subjects = subjectsWithDepartmentCodes(subjectData.items || [], departmentData.items || []);
+    }
     return `<h2>Assignments</h2>
       ${['faculty','admin'].includes(user.role)?`<div class="card"><form id="asgForm" class="form-grid">
         <label class="field">Title <input name="title" required /></label>
-        <label class="field">Subject ID <input name="subject" required /></label>
+        <label class="field">Subject <select name="subject" required ${subjects.length ? '' : 'disabled'}>${subjectOptions(subjects)}</select></label>
         <label class="field">Deadline <input type="datetime-local" name="deadline" required /></label>
         <label class="field">Max marks <input name="maxMarks" type="number" value="100" /></label>
-        <label class="field">File <input type="file" name="file" /></label>
-        <button class="btn primary">Create</button></form></div>`:''}
-      ${table(['Title','Deadline','Actions'], (data.items||[]).map(a=>`<tr><td>${a.title}</td><td>${new Date(a.deadline).toLocaleString()}</td><td>${user.role==='student'?`<form data-submit="${a._id}" class="upload-doc"><input type="file" name="file" required /><button class="btn">Submit</button></form>`:''}</td></tr>`).join(''))}
+        <label class="field">Attachment <input type="file" name="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.jpg,.jpeg,.png,.webp" /></label>
+        <button class="btn primary" ${subjects.length ? '' : 'disabled'}>Create</button></form>${subjects.length ? '' : subjectSetupNotice(user.role)}</div>`:''}
+      ${table(['Title','Deadline','Attachment','Actions'], (data.items||[]).map(a=>`<tr><td>${a.title}</td><td>${new Date(a.deadline).toLocaleString()}</td><td>${a.attachment?`<button class="btn" data-file="${a.attachment._id}" data-filename="${encodeURIComponent(a.attachment.originalName||'assignment')}">Download</button>`:''}</td><td>${user.role==='student'?`<form data-submit="${a._id}" class="upload-doc"><input type="file" name="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.csv,.jpg,.jpeg,.png,.webp" required /><button class="btn">Submit</button></form>`:''}</td></tr>`).join(''))}
       <div class="card"><h3>Submissions</h3>${table(['Student','Status','Marks'], (data.submissions||[]).map(s=>`<tr><td>${s.student?.name||s.student||''}</td><td>${badge(s.status)}</td><td>${s.marks??''} ${['faculty','admin'].includes(user.role)?`<button class="btn" data-grade="${s._id}">Grade</button>`:''}</td></tr>`).join(''))}</div>`;
   },
   async events() {
@@ -344,8 +414,24 @@ const routes = {
   },
   async notifications() {
     const data = await Api.request('/notifications');
+    let pushConfig = await Api.request('/notifications/push-config');
+    let pushDisabled =
+      !pushConfig.enabled ||
+      !('serviceWorker' in navigator) ||
+      !('PushManager' in window) ||
+      typeof Notification === 'undefined';
+    let browserSubscription;
+    if (!pushDisabled) {
+      const registration = await navigator.serviceWorker.ready;
+      browserSubscription = await registration.pushManager.getSubscription();
+      const endpoint = browserSubscription ? `?endpoint=${encodeURIComponent(browserSubscription.endpoint)}` : '';
+      pushConfig = await Api.request(`/notifications/push-config${endpoint}`);
+    }
+    const pushLabel = pushConfig.subscribed ? 'Disable browser notifications' : 'Enable browser notifications';
     return `<h2>Notifications ${data.unread?`(${data.unread} unread)`:''}</h2>
       <button class="btn" id="readAll">Mark all read</button>
+      <button class="btn" id="togglePush" ${pushDisabled ? 'disabled' : ''}>${pushLabel}</button>
+      ${pushConfig.enabled ? '' : '<p class="muted">Browser push is not configured by the server.</p>'}
       ${(data.items||[]).map(n=>`<div class="card"><strong>${n.title}</strong><p class="muted">${n.body||''}</p>${n.read?'':'<span class="badge pending">unread</span>'}</div>`).join('') || '<div class="empty">No notifications</div>'}`;
   },
   async career() {
@@ -459,15 +545,19 @@ const routes = {
   },
   async users() {
     const data = await Api.request('/users');
-    return `<h2>Users</h2>${table(['ID','Name','Email','Role','Active'], (data.items||[]).map(u=>`<tr><td><code>${u._id}</code></td><td>${u.name}</td><td>${u.email}</td><td>${u.role}</td><td>${u.isActive}</td></tr>`).join(''))}`;
+    return `<h2>Users</h2>${table(['ID','Name','Email','Role','Active','Actions'], (data.items||[]).map((u) => `<tr><td><code>${escapeHtml(u._id)}</code></td><td>${escapeHtml(u.name)}</td><td>${escapeHtml(u.email)}</td><td>${escapeHtml(u.role)}</td><td>${escapeHtml(u.isActive)}</td><td><button class="btn" data-user-edit="${escapeHtml(u._id)}" data-user-name="${escapeHtml(u.name)}" data-user-role="${escapeHtml(u.role)}" data-user-active="${String(u.isActive)}">Edit</button> <button class="btn ghost" data-user-delete="${escapeHtml(u._id)}">Delete</button></td></tr>`).join(''))}`;
   },
   async admin() {
     const [deps, subjects] = await Promise.all([Api.request('/departments'), Api.request('/subjects')]);
     return `<h2>Academic setup</h2>
       <div class="card"><form id="depForm" class="form-grid"><label class="field">Department name <input name="name" required /></label><label class="field">Code <input name="code" required /></label><button class="btn primary">Add department</button></form></div>
-      ${table(['Department','Code'], (deps.items||[]).map(d=>`<tr><td>${d.name}</td><td>${d.code}</td></tr>`).join(''))}
-      <div class="card"><form id="subForm" class="form-grid"><label class="field">Subject <input name="name" required /></label><label class="field">Code <input name="code" required /></label><label class="field">Department ID <input name="department" required /></label><label class="field">Semester <input name="semester" type="number" /></label><button class="btn">Add subject</button></form></div>
-      ${table(['Subject','Code','Sem'], (subjects.items||[]).map(s=>`<tr><td>${s.name}</td><td>${s.code}</td><td>${s.semester||''}</td></tr>`).join(''))}`;
+      ${table(['Department','Code','Actions'], (deps.items||[]).map((d) => `<tr><td>${escapeHtml(d.name)}</td><td>${escapeHtml(d.code)}</td><td><button class="btn" data-dept-edit="${escapeHtml(d._id)}" data-dept-name="${escapeHtml(d.name)}" data-dept-code="${escapeHtml(d.code)}">Edit</button> <button class="btn ghost" data-dept-delete="${escapeHtml(d._id)}">Delete</button></td></tr>`).join(''))}
+      <div class="card"><form id="subForm" class="form-grid"><label class="field">Subject <input name="name" required /></label><label class="field">Code <input name="code" required /></label><label class="field">Department <select name="department" required ${deps.items?.length ? '' : 'disabled'}><option value="">Select a department</option>${(deps.items||[]).map((d) => `<option value="${escapeHtml(d._id)}">${escapeHtml(d.code)} — ${escapeHtml(d.name)}</option>`).join('')}</select></label><label class="field">Semester <input name="semester" type="number" min="1" max="12" /></label><button class="btn" ${deps.items?.length ? '' : 'disabled'}>Add subject</button></form>${deps.items?.length ? '' : '<p class="muted">Add a department first.</p>'}</div>
+      ${table(['Subject','Code','Department','Regulation','Sem','Actions'], (subjects.items||[]).map((s) => {
+        const departmentId = s.department && typeof s.department === 'object' ? s.department._id || s.department.id : s.department;
+        const department = deps.items?.find((item) => String(item._id) === String(departmentId));
+        return `<tr><td>${escapeHtml(s.name)}</td><td>${escapeHtml(s.code)}</td><td>${escapeHtml(department?.code || '')}</td><td>${escapeHtml(s.regulation || 'CUSTOM')}</td><td>${escapeHtml(s.semester || '')}</td><td><button class="btn" data-sub-edit="${escapeHtml(s._id)}" data-sub-name="${escapeHtml(s.name)}" data-sub-code="${escapeHtml(s.code)}" data-sub-department="${escapeHtml(departmentId)}" data-sub-semester="${escapeHtml(s.semester || '')}">Edit</button> <button class="btn ghost" data-sub-delete="${escapeHtml(s._id)}">Delete</button></td></tr>`;
+      }).join(''))}`;
   },
   async analytics() {
     const data = await Api.request('/analytics');
@@ -541,11 +631,13 @@ async function bindPage(name) {
       try {
         const fd = new FormData(form);
         const hasFile = [...fd.values()].some((v) => v instanceof File && v.size);
-        if (hasFile) await Api.request(path, { method, form: fd });
+        const submitPath = form.dataset.submitPath || path;
+        const submitMethod = form.dataset.submitMethod || method;
+        if (hasFile) await Api.request(submitPath, { method: submitMethod, form: fd });
         else {
           const body = formToJson(form);
           if (extra) extra(body);
-          await Api.request(path, { method, body });
+          await Api.request(submitPath, { method: submitMethod, body });
         }
         toast('Saved');
         route();
@@ -558,6 +650,35 @@ async function bindPage(name) {
   postForm('resForm', '/resources');
   postForm('attForm', '/attendance');
   postForm('ttForm', '/timetable');
+  document.querySelectorAll('[data-tt-edit]').forEach((button) => {
+    button.onclick = () => {
+      const form = document.getElementById('ttForm');
+      if (!form) return;
+      form.elements.slotId.value = button.dataset.ttEdit;
+      form.elements.subject.value = button.dataset.subject;
+      if (form.elements.faculty) form.elements.faculty.value = button.dataset.faculty;
+      form.elements.classroom.value = button.dataset.classroom;
+      form.elements.dayOfWeek.value = button.dataset.day;
+      form.elements.startTime.value = button.dataset.start;
+      form.elements.endTime.value = button.dataset.end;
+      form.elements.semester.value = button.dataset.semester;
+      form.elements.section.value = button.dataset.section;
+      form.dataset.submitPath = `/timetable/${encodeURIComponent(button.dataset.ttEdit)}`;
+      form.dataset.submitMethod = 'PATCH';
+      document.getElementById('ttSubmit').textContent = 'Update slot';
+      document.getElementById('ttCancel').hidden = false;
+      form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+  });
+  document.getElementById('ttCancel')?.addEventListener('click', () => {
+    const form = document.getElementById('ttForm');
+    form.reset();
+    form.elements.slotId.value = '';
+    delete form.dataset.submitPath;
+    delete form.dataset.submitMethod;
+    document.getElementById('ttSubmit').textContent = 'Add slot';
+    document.getElementById('ttCancel').hidden = true;
+  });
   postForm('markForm', '/marks', 'POST', (b) => { b.published = b.published === 'true'; b.marksObtained = Number(b.marksObtained); b.maxMarks = Number(b.maxMarks); });
   postForm('asgForm', '/assignments');
   postForm('eventForm', '/events');
@@ -573,6 +694,78 @@ async function bindPage(name) {
   postForm('depForm', '/departments');
   postForm('subForm', '/subjects');
   postForm('setForm', '/settings', 'PATCH', (b) => { b.attendanceWarningPercent = Number(b.attendanceWarningPercent); });
+  document.querySelectorAll('[data-user-edit]').forEach((button) => {
+    button.onclick = async () => {
+      const id = button.dataset.userEdit;
+      const currentName = button.dataset.userName || '';
+      const currentRole = button.dataset.userRole || 'student';
+      const currentActive = button.dataset.userActive === 'true';
+      const name = prompt('User name', currentName);
+      if (name === null) return;
+      const role = prompt('User role', currentRole);
+      if (role === null) return;
+      const isActive = prompt('Active? true/false', String(currentActive));
+      if (isActive === null) return;
+      await Api.request(`/users/${id}`, { method: 'PATCH', body: { name, role, isActive: isActive === 'true' } });
+      toast('User updated');
+      route();
+    };
+  });
+  document.querySelectorAll('[data-user-delete]').forEach((button) => {
+    button.onclick = async () => {
+      const id = button.dataset.userDelete;
+      if (!confirm('Delete this user?')) return;
+      await Api.request(`/users/${id}`, { method: 'DELETE' });
+      toast('User deleted');
+      route();
+    };
+  });
+  document.querySelectorAll('[data-dept-edit]').forEach((button) => {
+    button.onclick = async () => {
+      const id = button.dataset.deptEdit;
+      const name = prompt('Department name', button.dataset.deptName || '');
+      if (name === null) return;
+      const code = prompt('Department code', button.dataset.deptCode || '');
+      if (code === null) return;
+      await Api.request(`/departments/${id}`, { method: 'PATCH', body: { name, code } });
+      toast('Department updated');
+      route();
+    };
+  });
+  document.querySelectorAll('[data-dept-delete]').forEach((button) => {
+    button.onclick = async () => {
+      const id = button.dataset.deptDelete;
+      if (!confirm('Delete this department?')) return;
+      await Api.request(`/departments/${id}`, { method: 'DELETE' });
+      toast('Department deleted');
+      route();
+    };
+  });
+  document.querySelectorAll('[data-sub-edit]').forEach((button) => {
+    button.onclick = async () => {
+      const id = button.dataset.subEdit;
+      const name = prompt('Subject name', button.dataset.subName || '');
+      if (name === null) return;
+      const code = prompt('Subject code', button.dataset.subCode || '');
+      if (code === null) return;
+      const department = prompt('Department ID', button.dataset.subDepartment || '');
+      if (department === null) return;
+      const semester = prompt('Semester', button.dataset.subSemester || '');
+      if (semester === null) return;
+      await Api.request(`/subjects/${id}`, { method: 'PATCH', body: { name, code, department, semester: Number(semester) || undefined } });
+      toast('Subject updated');
+      route();
+    };
+  });
+  document.querySelectorAll('[data-sub-delete]').forEach((button) => {
+    button.onclick = async () => {
+      const id = button.dataset.subDelete;
+      if (!confirm('Delete this subject?')) return;
+      await Api.request(`/subjects/${id}`, { method: 'DELETE' });
+      toast('Subject deleted');
+      route();
+    };
+  });
   const profileForm = document.getElementById('profileForm');
   if (profileForm) profileForm.onsubmit = async (e) => {
     e.preventDefault();
@@ -596,6 +789,46 @@ async function bindPage(name) {
   };
   postForm('resumeForm', '/career/resume');
   document.getElementById('readAll')?.addEventListener('click', async () => { await Api.request('/notifications/read-all', { method: 'POST', body: {} }); route(); });
+  document.getElementById('togglePush')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      let pushConfig = await Api.request('/notifications/push-config');
+      const registration = await navigator.serviceWorker.ready;
+      let subscription = await registration.pushManager.getSubscription();
+      if (subscription) {
+        pushConfig = await Api.request(`/notifications/push-config?endpoint=${encodeURIComponent(subscription.endpoint)}`);
+      }
+      if (subscription && pushConfig.subscribed) {
+        await Api.request('/notifications/push-subscription', {
+          method: 'DELETE',
+          body: { endpoint: subscription.endpoint }
+        });
+        await subscription.unsubscribe();
+        toast('Browser notifications disabled');
+      } else {
+        if (!pushConfig.enabled) throw new Error('Browser push is not configured by the server');
+        if (Notification.permission === 'denied') throw new Error('Notifications are blocked in browser settings');
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') throw new Error('Notification permission was not granted');
+        if (!subscription) {
+          subscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: pushApplicationServerKey(pushConfig.publicKey)
+          });
+        }
+        await Api.request('/notifications/push-subscription', {
+          method: 'POST',
+          body: subscription.toJSON()
+        });
+        toast('Browser notifications enabled');
+      }
+      await route();
+    } catch (error) {
+      toast(error.message);
+      button.disabled = false;
+    }
+  });
   document.querySelectorAll('[data-approve]').forEach((b) => b.onclick = async () => { await Api.request(`/leave/${b.dataset.approve}/review`, { method: 'POST', body: { status: 'approved' } }); route(); });
   document.querySelectorAll('[data-reject]').forEach((b) => b.onclick = async () => { await Api.request(`/leave/${b.dataset.reject}/review`, { method: 'POST', body: { status: 'rejected', comment: 'Rejected' } }); route(); });
   document.querySelectorAll('[data-file]').forEach((b) => b.onclick = () => Api.download(b.dataset.file, decodeURIComponent(b.dataset.filename || '')).catch((e) => toast(e.message)));
@@ -635,6 +868,12 @@ async function bindPage(name) {
       chat.innerHTML += `<div class="bubble">${res.reply}<br><span class="muted">${res.disclaimer}</span></div>`;
       ask.reset();
     };
+  }
+
+  function pushApplicationServerKey(value) {
+    const base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+    return Uint8Array.from(atob(padded), (character) => character.charCodeAt(0));
   }
   const analytics = document.getElementById('analytics-data');
   if (analytics) {

@@ -18,7 +18,7 @@ const download = asyncHandler(async (req, res) => {
   if (req.query.as === 'resource') {
     await Resource.updateOne({ file: asset._id }, { $inc: { downloads: 1 } });
   }
-  streamFile(res, asset);
+  await streamFile(res, asset);
 });
 
 module.exports = { download };

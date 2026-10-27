@@ -13,7 +13,8 @@ const academicYearSchema = new mongoose.Schema(
 const subjectSchema = new mongoose.Schema(
   {
     name: { type: String, required: true },
-    code: { type: String, required: true, unique: true, uppercase: true },
+    code: { type: String, required: true, uppercase: true, trim: true },
+    regulation: { type: String, required: true, uppercase: true, trim: true, default: 'CUSTOM' },
     department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department', required: true },
     semester: { type: Number, min: 1, max: 12 },
     credits: Number,
@@ -21,6 +22,8 @@ const subjectSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+subjectSchema.index({ department: 1, regulation: 1, code: 1 }, { unique: true });
 
 const sectionSchema = new mongoose.Schema(
   {

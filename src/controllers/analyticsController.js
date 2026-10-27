@@ -9,6 +9,7 @@ const Mark = require('../models/Marks');
 const asyncHandler = require('../utils/asyncHandler');
 const AppError = require('../utils/AppError');
 const { toCsv } = require('../utils/csv');
+const { createReportPdf } = require('../services/pdfService');
 
 const summary = asyncHandler(async (req, res) => {
   if (!['admin', 'faculty', 'placement_officer'].includes(req.user.role)) throw new AppError('Not authorized', 403);
@@ -40,6 +41,15 @@ const audit = asyncHandler(async (req, res) => {
       ])
     );
   }
+  if (req.query.format === 'pdf') {
+    return createReportPdf(res, 'Audit report', items, [
+      { label: 'Time', value: (r) => r.createdAt.toISOString() },
+      { label: 'Actor', value: (r) => r.actor?.email },
+      { label: 'Action', value: 'action' },
+      { label: 'Entity', value: 'entity' }
+    ]);
+  }
+  if (req.query.format) throw new AppError('Unsupported report format', 400);
   res.json({ success: true, items });
 });
 

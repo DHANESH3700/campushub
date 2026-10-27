@@ -44,7 +44,18 @@ const updateSettings = asyncHandler(async (req, res) => {
 module.exports = {
   departments: crud(Department, 'Department'),
   years: crud(AcademicYear, 'AcademicYear'),
-  subjects: crud(Subject, 'Subject'),
+  subjects: {
+    ...crud(Subject, 'Subject'),
+    list: asyncHandler(async (req, res) => {
+      const filter = req.user.role === 'faculty'
+        ? { department: req.user.department || null }
+        : req.query.department
+          ? { department: req.query.department }
+          : {};
+      const items = await Subject.find(filter).sort('-createdAt');
+      res.json({ success: true, items });
+    })
+  },
   sections: crud(Section, 'Section'),
   assessments: crud(AssessmentType, 'AssessmentType'),
   templates: crud(NotificationTemplate, 'NotificationTemplate'),

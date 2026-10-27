@@ -37,4 +37,11 @@ const updateUser = asyncHandler(async (req, res) => {
   res.json({ success: true, user });
 });
 
-module.exports = { listUsers, getUser, updateUser };
+const deleteUser = asyncHandler(async (req, res) => {
+  const user = await User.findByIdAndDelete(req.params.id);
+  if (!user) throw new AppError('User not found', 404);
+  await audit(req, 'user.delete', 'User', user._id);
+  res.json({ success: true });
+});
+
+module.exports = { listUsers, getUser, updateUser, deleteUser };

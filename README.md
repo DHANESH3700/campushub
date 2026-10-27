@@ -36,7 +36,7 @@ The API lives at `/api`. The frontend is a hash-routed SPA served from `public/`
 
 ## Requirements
 
-- Node.js 18 or later
+- Node.js 20 or later
 - MongoDB 6+ (local or hosted, for example MongoDB Atlas)
 
 ## Installation
@@ -97,7 +97,7 @@ Default: disk folder from `UPLOAD_DIR` (default `uploads/`). Files are not serve
 - Paths are resolved under the upload root to block directory traversal.
 - Authorization is checked before streaming.
 
-**Cloud note:** local disk is wiped on many PaaS dynos/containers. For production, attach a persistent volume or object storage. S3-style variables are reserved in `.env.example`; they are not wired until you add an adapter.
+For S3 or an S3-compatible service, set `STORAGE_PROVIDER=s3`, `S3_BUCKET`, and `S3_REGION`. Credentials may come from the AWS SDK credential chain (recommended IAM role) or the paired `S3_ACCESS_KEY` and `S3_SECRET_KEY` values. Set `S3_ENDPOINT` for a compatible service. Grant only object `PutObject`, `GetObject`, and `DeleteObject` permissions for the bucket prefix used by this app, and keep bucket public access blocked. New uploads are private objects; authenticated file downloads retain the app's existing authorization checks. Leave `STORAGE_PROVIDER=local` to keep using disk.
 
 ## PWA
 
@@ -112,7 +112,9 @@ Default: disk folder from `UPLOAD_DIR` (default `uploads/`). Files are not serve
 - Email when SMTP is configured
 - Duplicate suppression via `dedupeKey`
 - A reminder job runs every six hours (disabled during tests) for assignment/placement/scholarship deadlines and attendance warnings
-- Web Push: set `VAPID_*` keys when you are ready; the UI stores a push preference. Do not claim push delivery until VAPID keys are generated (`npx web-push generate-vapid-keys`) and wired to a send path
+- Optional browser push: generate VAPID keys with `npx web-push generate-vapid-keys`, set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT`, then let each user enable browser notifications on the Notifications page over HTTPS (or localhost). Push is opt-in and expired subscriptions are removed after delivery failures.
+
+Attendance reports support CSV (default) and PDF with `/api/attendance/report?format=pdf`. Admin audit reports support JSON (default), CSV, and PDF with `/api/audit?format=pdf`.
 
 ## Assistant
 
@@ -124,7 +126,7 @@ Default: disk folder from `UPLOAD_DIR` (default `uploads/`). Files are not serve
 npm test
 ```
 
-Coverage includes unauthenticated access, JWT failures, registration/login, admin privilege checks, department isolation on leave, unpublished marks, overlapping leave, placement duplicates, event registration, and private file access.
+Coverage includes unauthenticated access, JWT failures, registration/login, admin privilege checks, department isolation on leave, unpublished marks, overlapping leave, placement duplicates, event registration, private file access, PDF formats, opt-in push subscriptions, and mocked S3 upload/download.
 
 Manual checks: log in as each demo role, submit a leave request, mark attendance, upload a resource, apply to a job, install the PWA on a phone, and confirm files download only while logged in.
 
@@ -159,12 +161,10 @@ Pricing and quotas change; read the current provider docs before you assume a fr
 - Central error handler hides stack traces in production
 - Audit log for administrative actions
 
-Never commit `.env` or real SMTP/JWT secrets.
+Never commit `.env` or real SMTP, JWT, VAPID, or S3 credentials.
 
 ## Known limitations
 
-- PDF report export is not bundled (CSV is available for attendance and audit).
-- Object storage adapter is documented but not implemented; use disk or a volume.
 - No live GPS for transport (by design).
 - Charts on the admin dashboard need Chart.js loaded from jsDelivr; an offline admin session will still show tables.
 - First `npm test` may download a MongoDB binary for `mongodb-memory-server`.
